@@ -1,4 +1,4 @@
-!function(e){if("object"==typeof exports&&"undefined"!=typeof module)module.exports=e();else if("function"==typeof define&&define.amd)define([],e);else{var f;"undefined"!=typeof window?f=window:"undefined"!=typeof global?f=global:"undefined"!=typeof self&&(f=self),f.jade=e()}}(function(){var define,module,exports;return (function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
+(function(f){if(typeof exports==="object"&&typeof module!=="undefined"){module.exports=f()}else if(typeof define==="function"&&define.amd){define([],f)}else{var g;if(typeof window!=="undefined"){g=window}else if(typeof global!=="undefined"){g=global}else if(typeof self!=="undefined"){g=self}else{g=this}g.jade = f()}})(function(){var define,module,exports;return (function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
 'use strict';
 
 var nodes = require('./nodes');
@@ -1437,7 +1437,7 @@ Lexer.prototype = {
 
   doctype: function() {
     if (this.scan(/^!!! *([^\n]+)?/, 'doctype')) {
-      throw new Error('`!!!` is deprecated, you must now use `doctype`');
+      console.warn('`!!!` is deprecated, you must now use `doctype`');
     }
     var node = this.scan(/^(?:doctype) *([^\n]+)?/, 'doctype');
     if (node && node.val && node.val.trim() === '5') {
@@ -4089,69 +4089,40 @@ var substr = 'ab'.substr(-1) === 'b'
 // shim for using process in browser
 
 var process = module.exports = {};
+var queue = [];
+var draining = false;
 
-process.nextTick = (function () {
-    var canSetImmediate = typeof window !== 'undefined'
-    && window.setImmediate;
-    var canMutationObserver = typeof window !== 'undefined'
-    && window.MutationObserver;
-    var canPost = typeof window !== 'undefined'
-    && window.postMessage && window.addEventListener
-    ;
-
-    if (canSetImmediate) {
-        return function (f) { return window.setImmediate(f) };
+function drainQueue() {
+    if (draining) {
+        return;
     }
-
-    var queue = [];
-
-    if (canMutationObserver) {
-        var hiddenDiv = document.createElement("div");
-        var observer = new MutationObserver(function () {
-            var queueList = queue.slice();
-            queue.length = 0;
-            queueList.forEach(function (fn) {
-                fn();
-            });
-        });
-
-        observer.observe(hiddenDiv, { attributes: true });
-
-        return function nextTick(fn) {
-            if (!queue.length) {
-                hiddenDiv.setAttribute('yes', 'no');
-            }
-            queue.push(fn);
-        };
+    draining = true;
+    var currentQueue;
+    var len = queue.length;
+    while(len) {
+        currentQueue = queue;
+        queue = [];
+        var i = -1;
+        while (++i < len) {
+            currentQueue[i]();
+        }
+        len = queue.length;
     }
-
-    if (canPost) {
-        window.addEventListener('message', function (ev) {
-            var source = ev.source;
-            if ((source === window || source === null) && ev.data === 'process-tick') {
-                ev.stopPropagation();
-                if (queue.length > 0) {
-                    var fn = queue.shift();
-                    fn();
-                }
-            }
-        }, true);
-
-        return function nextTick(fn) {
-            queue.push(fn);
-            window.postMessage('process-tick', '*');
-        };
+    draining = false;
+}
+process.nextTick = function (fun) {
+    queue.push(fun);
+    if (!draining) {
+        setTimeout(drainQueue, 0);
     }
-
-    return function nextTick(fn) {
-        setTimeout(fn, 0);
-    };
-})();
+};
 
 process.title = 'browser';
 process.browser = true;
 process.env = {};
 process.argv = [];
+process.version = ''; // empty string to avoid regexp issues
+process.versions = {};
 
 function noop() {}
 
@@ -4172,6 +4143,7 @@ process.cwd = function () { return '/' };
 process.chdir = function (dir) {
     throw new Error('process.chdir is not supported');
 };
+process.umask = function() { return 0; };
 
 },{}],29:[function(require,module,exports){
 exports = (module.exports = parse);
@@ -4456,6 +4428,20 @@ function isExpression(src) {
 var acorn = require('acorn');
 var walk = require('acorn/util/walk');
 
+//polyfill for https://github.com/marijnh/acorn/pull/195
+walk.base.ExportDeclaration = function (node, st, c) {
+  c(node.declaration, st);
+};
+walk.base.ImportDeclaration = function (node, st, c) {
+  node.specifiers.forEach(function (specifier) {
+    c(specifier, st);
+  });
+};
+walk.base.ImportSpecifier = function (node, st, c) {
+};
+walk.base.ImportBatchSpecifier = function (node, st, c) {
+};
+
 function isScope(node) {
   return node.type === 'FunctionExpression' || node.type === 'FunctionDeclaration' || node.type === 'Program';
 }
@@ -4515,6 +4501,19 @@ function findGlobals(source) {
     'TryStatement': function (node) {
       node.handler.body.locals = node.handler.body.locals || {};
       node.handler.body.locals[node.handler.param.name] = true;
+    },
+    'ImportSpecifier': function (node) {
+      var id = node.name ? node.name : node.id;
+      if (id.type === 'Identifier') {
+        ast.locals = ast.locals || {};
+        ast.locals[id.name] = true;
+      }
+    },
+    'ImportBatchSpecifier': function (node) {
+      if (node.name.type === 'Identifier') {
+        ast.locals = ast.locals || {};
+        ast.locals[node.name.name] = true;
+      }
     }
   });
   walk.ancestor(ast, {
@@ -4583,7 +4582,7 @@ function findGlobals(source) {
 })(this, function(exports) {
   "use strict";
 
-  exports.version = "0.8.0";
+  exports.version = "0.11.0";
 
   // The main exported interface (under `self.acorn` when in the
   // browser) is a `parse` function that takes a code string and
@@ -4598,7 +4597,9 @@ function findGlobals(source) {
     input = String(inpt); inputLen = input.length;
     setOptions(opts);
     initTokenState();
-    return parseTopLevel(options.program);
+    var startPos = options.locations ? [tokPos, curPosition()] : tokPos;
+    initParserState();
+    return parseTopLevel(options.program || startNodeAt(startPos));
   };
 
   // A second optional argument can be given to further configure
@@ -4624,6 +4625,9 @@ function findGlobals(source) {
     // When enabled, a return at the top level is not considered an
     // error.
     allowReturnOutsideFunction: false,
+    // When enabled, import/export statements are not constrained to
+    // appearing at the top of the program.
+    allowImportExportEverywhere: false,
     // When `locations` is on, `loc` properties holding objects with
     // `start` and `end` properties in `{line, column}` form (with
     // line being 1-based and column 0-based) will be attached to the
@@ -4666,7 +4670,22 @@ function findGlobals(source) {
     sourceFile: null,
     // This value, if given, is stored in every node, whether
     // `locations` is on or off.
-    directSourceFile: null
+    directSourceFile: null,
+    // When enabled, parenthesized expressions are represented by
+    // (non-standard) ParenthesizedExpression nodes
+    preserveParens: false
+  };
+
+  // This function tries to parse a single expression at a given
+  // offset in a string. Useful for parsing mixed-language formats
+  // that embed JavaScript expressions.
+
+  exports.parseExpressionAt = function(inpt, pos, opts) {
+    input = String(inpt); inputLen = input.length;
+    setOptions(opts);
+    initTokenState(pos);
+    initParserState();
+    return parseExpression();
   };
 
   var isArray = function (obj) {
@@ -4674,9 +4693,9 @@ function findGlobals(source) {
   };
 
   function setOptions(opts) {
-    options = opts || {};
-    for (var opt in defaultOptions) if (!has(options, opt))
-      options[opt] = defaultOptions[opt];
+    options = {};
+    for (var opt in defaultOptions)
+      options[opt] = opts && has(opts, opt) ? opts[opt] : defaultOptions[opt];
     sourceFile = options.sourceFile || null;
     if (isArray(options.onToken)) {
       var tokens = options.onToken;
@@ -4753,6 +4772,7 @@ function findGlobals(source) {
     input = String(inpt); inputLen = input.length;
     setOptions(opts);
     initTokenState();
+    skipSpace();
 
     function getToken(forceRegexp) {
       lastEnd = tokEnd;
@@ -4773,6 +4793,10 @@ function findGlobals(source) {
       tokRegexpAllowed = reAllowed;
       skipSpace();
     };
+    getToken.noRegexp = function() {
+      tokRegexpAllowed = false;
+    };
+    getToken.options = options;
     return getToken;
   };
 
@@ -4835,11 +4859,21 @@ function findGlobals(source) {
 
   var metParenL;
 
-  // This is used by parser for detecting if it's inside ES6
-  // Template String. If it is, it should treat '$' as prefix before
-  // '{expression}' and everything else as string literals.
+  // This is used by the tokenizer to track the template strings it is
+  // inside, and count the amount of open braces seen inside them, to
+  // be able to switch back to a template token when the } to match ${
+  // is encountered. It will hold an array of integers.
 
-  var inTemplate;
+  var templates;
+
+  function initParserState() {
+    lastStart = lastEnd = tokPos;
+    if (options.locations) lastEndLoc = curPosition();
+    inFunction = inGenerator = strict = false;
+    labels = [];
+    skipSpace();
+    readToken();
+  }
 
   // This function is used to raise exceptions on parse errors. It
   // takes an offset integer (into the current `input`) to indicate
@@ -4932,8 +4966,9 @@ function findGlobals(source) {
   var _bracketL = {type: "[", beforeExpr: true}, _bracketR = {type: "]"}, _braceL = {type: "{", beforeExpr: true};
   var _braceR = {type: "}"}, _parenL = {type: "(", beforeExpr: true}, _parenR = {type: ")"};
   var _comma = {type: ",", beforeExpr: true}, _semi = {type: ";", beforeExpr: true};
-  var _colon = {type: ":", beforeExpr: true}, _dot = {type: "."}, _ellipsis = {type: "..."}, _question = {type: "?", beforeExpr: true};
-  var _arrow = {type: "=>", beforeExpr: true}, _bquote = {type: "`"}, _dollarBraceL = {type: "${", beforeExpr: true};
+  var _colon = {type: ":", beforeExpr: true}, _dot = {type: "."}, _question = {type: "?", beforeExpr: true};
+  var _arrow = {type: "=>", beforeExpr: true}, _template = {type: "template"}, _templateContinued = {type: "templateContinued"};
+  var _ellipsis = {type: "...", prefix: true, beforeExpr: true};
 
   // Operators. These carry several kinds of properties to help the
   // parser use them properly (the presence of these properties is
@@ -4975,7 +5010,8 @@ function findGlobals(source) {
                       parenL: _parenL, parenR: _parenR, comma: _comma, semi: _semi, colon: _colon,
                       dot: _dot, ellipsis: _ellipsis, question: _question, slash: _slash, eq: _eq,
                       name: _name, eof: _eof, num: _num, regexp: _regexp, string: _string,
-                      arrow: _arrow, bquote: _bquote, dollarBraceL: _dollarBraceL};
+                      arrow: _arrow, template: _template, templateContinued: _templateContinued, star: _star,
+                      assign: _assign};
   for (var kw in keywordTypes) exports.tokTypes["_" + kw] = keywordTypes[kw];
 
   // This is a trick taken from Esprima. It turns out that, on
@@ -5070,6 +5106,10 @@ function findGlobals(source) {
 
   var newline = /[\n\r\u2028\u2029]/;
 
+  function isNewLine(code) {
+    return code === 10 || code === 13 || code === 0x2028 || code == 0x2029;
+  }
+
   // Matches a whole line break (where CRLF is considered a single
   // line break). Used to count lines.
 
@@ -5102,20 +5142,33 @@ function findGlobals(source) {
   // These are used when `options.locations` is on, for the
   // `tokStartLoc` and `tokEndLoc` properties.
 
-  function Position() {
-    this.line = tokCurLine;
-    this.column = tokPos - tokLineStart;
+  function Position(line, col) {
+    this.line = line;
+    this.column = col;
+  }
+
+  Position.prototype.offset = function(n) {
+    return new Position(this.line, this.column + n);
+  }
+
+  function curPosition() {
+    return new Position(tokCurLine, tokPos - tokLineStart);
   }
 
   // Reset the token state. Used at the start of a parse.
 
-  function initTokenState() {
-    tokCurLine = 1;
-    tokPos = tokLineStart = 0;
+  function initTokenState(pos) {
+    if (pos) {
+      tokPos = pos;
+      tokLineStart = Math.max(0, input.lastIndexOf("\n", pos));
+      tokCurLine = input.slice(0, tokLineStart).split(newline).length;
+    } else {
+      tokCurLine = 1;
+      tokPos = tokLineStart = 0;
+    }
     tokRegexpAllowed = true;
     metParenL = 0;
-    inTemplate = false;
-    skipSpace();
+    templates = [];
   }
 
   // Called at the end of every token. Sets `tokEnd`, `tokVal`, and
@@ -5124,7 +5177,7 @@ function findGlobals(source) {
 
   function finishToken(type, val, shouldSkipSpace) {
     tokEnd = tokPos;
-    if (options.locations) tokEndLoc = new Position;
+    if (options.locations) tokEndLoc = curPosition();
     tokType = type;
     if (shouldSkipSpace !== false) skipSpace();
     tokVal = val;
@@ -5135,7 +5188,7 @@ function findGlobals(source) {
   }
 
   function skipBlockComment() {
-    var startLoc = options.onComment && options.locations && new Position;
+    var startLoc = options.onComment && options.locations && curPosition();
     var start = tokPos, end = input.indexOf("*/", tokPos += 2);
     if (end === -1) raise(tokPos - 2, "Unterminated comment");
     tokPos = end + 2;
@@ -5149,12 +5202,12 @@ function findGlobals(source) {
     }
     if (options.onComment)
       options.onComment(true, input.slice(start + 2, end), start, tokPos,
-                        startLoc, options.locations && new Position);
+                        startLoc, options.locations && curPosition());
   }
 
   function skipLineComment(startSkip) {
     var start = tokPos;
-    var startLoc = options.onComment && options.locations && new Position;
+    var startLoc = options.onComment && options.locations && curPosition();
     var ch = input.charCodeAt(tokPos+=startSkip);
     while (tokPos < inputLen && ch !== 10 && ch !== 13 && ch !== 8232 && ch !== 8233) {
       ++tokPos;
@@ -5162,7 +5215,7 @@ function findGlobals(source) {
     }
     if (options.onComment)
       options.onComment(false, input.slice(start + startSkip, tokPos), start, tokPos,
-                        startLoc, options.locations && new Position);
+                        startLoc, options.locations && curPosition());
   }
 
   // Called at the start of the parse and after every token. Skips
@@ -5305,31 +5358,6 @@ function findGlobals(source) {
     return finishOp(code === 61 ? _eq : _prefix, 1);
   }
 
-  // Get token inside ES6 template (special rules work there).
-
-  function getTemplateToken(code) {
-    // '`' and '${' have special meanings, but they should follow
-    // string (can be empty)
-    if (tokType === _string) {
-      if (code === 96) { // '`'
-        ++tokPos;
-        return finishToken(_bquote);
-      } else
-      if (code === 36 && input.charCodeAt(tokPos + 1) === 123) { // '${'
-        tokPos += 2;
-        return finishToken(_dollarBraceL);
-      }
-    }
-
-    if (code === 125) { // '}'
-      ++tokPos;
-      return finishToken(_braceR, undefined, false);
-    }
-
-    // anything else is considered string literal
-    return readTmplString();
-  }
-
   function getTokenFromCode(code) {
     switch (code) {
     // The interpretation of a dot depends on whether it is followed
@@ -5344,15 +5372,23 @@ function findGlobals(source) {
     case 44: ++tokPos; return finishToken(_comma);
     case 91: ++tokPos; return finishToken(_bracketL);
     case 93: ++tokPos; return finishToken(_bracketR);
-    case 123: ++tokPos; return finishToken(_braceL);
-    case 125: ++tokPos; return finishToken(_braceR);
+    case 123:
+      ++tokPos;
+      if (templates.length) ++templates[templates.length - 1];
+      return finishToken(_braceL);
+    case 125:
+      ++tokPos;
+      if (templates.length && --templates[templates.length - 1] === 0)
+        return readTemplateString(_templateContinued);
+      else
+        return finishToken(_braceR);
     case 58: ++tokPos; return finishToken(_colon);
     case 63: ++tokPos; return finishToken(_question);
 
     case 96: // '`'
       if (options.ecmaVersion >= 6) {
         ++tokPos;
-        return finishToken(_bquote, undefined, false);
+        return readTemplateString(_template);
       }
 
     case 48: // '0'
@@ -5407,13 +5443,11 @@ function findGlobals(source) {
   function readToken(forceRegexp) {
     if (!forceRegexp) tokStart = tokPos;
     else tokPos = tokStart + 1;
-    if (options.locations) tokStartLoc = new Position;
+    if (options.locations) tokStartLoc = curPosition();
     if (forceRegexp) return readRegexp();
     if (tokPos >= inputLen) return finishToken(_eof);
 
     var code = input.charCodeAt(tokPos);
-
-    if (inTemplate) return getTemplateToken(code);
 
     // Identifier or keyword. '\uXXXX' sequences are allowed in
     // identifiers, so '\' also dispatches to that.
@@ -5437,6 +5471,10 @@ function findGlobals(source) {
     finishToken(type, str);
   }
 
+  var regexpUnicodeSupport = false;
+  try { new RegExp("\uffff", "u"); regexpUnicodeSupport = true; }
+  catch(e) {}
+
   // Parse a regular expression. Some context-awareness is necessary,
   // since a '/' inside a '[]' set does not end the expression.
 
@@ -5459,14 +5497,36 @@ function findGlobals(source) {
     // Need to use `readWord1` because '\uXXXX' sequences are allowed
     // here (don't ask).
     var mods = readWord1();
-    if (mods && !/^[gmsiy]*$/.test(mods)) raise(start, "Invalid regular expression flag");
+    var tmp = content;
+    if (mods) {
+      var validFlags = /^[gmsiy]*$/;
+      if (options.ecmaVersion >= 6) validFlags = /^[gmsiyu]*$/;
+      if (!validFlags.test(mods)) raise(start, "Invalid regular expression flag");
+      if (mods.indexOf('u') >= 0 && !regexpUnicodeSupport) {
+        // Replace each astral symbol and every Unicode code point
+        // escape sequence that represents such a symbol with a single
+        // ASCII symbol to avoid throwing on regular expressions that
+        // are only valid in combination with the `/u` flag.
+        tmp = tmp
+          .replace(/\\u\{([0-9a-fA-F]{5,6})\}/g, "x")
+          .replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, "x");
+      }
+    }
+    // Detect invalid regular expressions.
     try {
-      var value = new RegExp(content, mods);
+      new RegExp(tmp);
     } catch (e) {
       if (e instanceof SyntaxError) raise(start, "Error parsing regular expression: " + e.message);
       raise(e);
     }
-    return finishToken(_regexp, value);
+    // Get a regular expression object for this pattern-flag pair, or `null` in
+    // case the current environment doesn't support the flags it uses.
+    try {
+      var value = new RegExp(content, mods);
+    } catch (err) {
+      value = null;
+    }
+    return finishToken(_regexp, {pattern: content, flags: mods, value: value});
   }
 
   // Read an integer in the given radix. Return null if zero digits
@@ -5571,28 +5631,34 @@ function findGlobals(source) {
     }
   }
 
-  function readTmplString() {
-    var out = "";
+  function readTemplateString(type) {
+    if (type == _templateContinued) templates.pop();
+    var out = "", start = tokPos;;
     for (;;) {
-      if (tokPos >= inputLen) raise(tokStart, "Unterminated string constant");
-      var ch = input.charCodeAt(tokPos);
-      if (ch === 96 || ch === 36 && input.charCodeAt(tokPos + 1) === 123) // '`', '${'
-        return finishToken(_string, out);
-      if (ch === 92) { // '\'
+      if (tokPos >= inputLen) raise(tokStart, "Unterminated template");
+      var ch = input.charAt(tokPos);
+      if (ch === "`" || ch === "$" && input.charCodeAt(tokPos + 1) === 123) { // '`', '${'
+        var raw = input.slice(start, tokPos);
+        ++tokPos;
+        if (ch == "$") { ++tokPos; templates.push(1); }
+        return finishToken(type, {cooked: out, raw: raw});
+      }
+
+      if (ch === "\\") { // '\'
         out += readEscapedChar();
       } else {
         ++tokPos;
-        if (newline.test(String.fromCharCode(ch))) {
-          if (ch === 13 && input.charCodeAt(tokPos) === 10) {
+        if (newline.test(ch)) {
+          if (ch === "\r" && input.charCodeAt(tokPos) === 10) {
             ++tokPos;
-            ch = 10;
+            ch = "\n";
           }
           if (options.locations) {
             ++tokCurLine;
             tokLineStart = tokPos;
           }
         }
-        out += String.fromCharCode(ch); // '\'
+        out += ch;
       }
     }
   }
@@ -5616,7 +5682,6 @@ function findGlobals(source) {
         case 114: return "\r"; // 'r' -> '\r'
         case 120: return String.fromCharCode(readHexChar(2)); // 'x'
         case 117: return readCodePoint(); // 'u'
-        case 85: return String.fromCharCode(readHexChar(8)); // 'U'
         case 116: return "\t"; // 't' -> '\t'
         case 98: return "\b"; // 'b' -> '\b'
         case 118: return "\u000b"; // 'v' -> '\u000b'
@@ -5764,19 +5829,26 @@ function findGlobals(source) {
     return node;
   }
 
-  // Start a node whose start offset information should be based on
-  // the start of another node. For example, a binary operator node is
-  // only started after its left-hand side has already been parsed.
+  // Sometimes, a node is only started *after* the token stream passed
+  // its start position. The functions below help storing a position
+  // and creating a node from a previous position.
 
-  function startNodeFrom(other) {
-    var node = new Node();
-    node.start = other.start;
+  function storeCurrentPos() {
+    return options.locations ? [tokStart, tokStartLoc] : tokStart;
+  }
+
+  function startNodeAt(pos) {
+    var node = new Node(), start = pos;
     if (options.locations) {
       node.loc = new SourceLocation();
-      node.loc.start = other.loc.start;
+      node.loc.start = start[1];
+      start = pos[0];
     }
+    node.start = start;
+    if (options.directSourceFile)
+      node.sourceFile = options.directSourceFile;
     if (options.ranges)
-      node.range = [other.range[0], 0];
+      node.range = [start, 0];
 
     return node;
   }
@@ -5790,6 +5862,15 @@ function findGlobals(source) {
       node.loc.end = lastEndLoc;
     if (options.ranges)
       node.range[1] = lastEnd;
+    return node;
+  }
+
+  function finishNodeAt(node, type, pos) {
+    if (options.locations) { node.loc.end = pos[1]; pos = pos[0]; }
+    node.type = type;
+    node.end = pos;
+    if (options.ranges)
+      node.range[1] = pos;
     return node;
   }
 
@@ -5912,8 +5993,10 @@ function findGlobals(source) {
         break;
 
       case "ArrayPattern":
-        for (var i = 0; i < param.elements.length; i++)
-          checkFunctionParam(param.elements[i], nameHash);
+        for (var i = 0; i < param.elements.length; i++) {
+          var elem = param.elements[i];
+          if (elem) checkFunctionParam(elem, nameHash);
+        }
         break;
     }
   }
@@ -5924,7 +6007,7 @@ function findGlobals(source) {
   // strict mode, init properties are also not allowed to be repeated.
 
   function checkPropClash(prop, propHash) {
-    if (prop.computed) return;
+    if (options.ecmaVersion >= 6) return;
     var key = prop.key, name;
     switch (key.type) {
       case "Identifier": name = key.name; break;
@@ -5990,21 +6073,19 @@ function findGlobals(source) {
   // `program` argument.  If present, the statements will be appended
   // to its body instead of creating a new node.
 
-  function parseTopLevel(program) {
-    lastStart = lastEnd = tokPos;
-    if (options.locations) lastEndLoc = new Position;
-    inFunction = inGenerator = strict = null;
-    labels = [];
-    readToken();
-
-    var node = program || startNode(), first = true;
-    if (!program) node.body = [];
+  function parseTopLevel(node) {
+    var first = true;
+    if (!node.body) node.body = [];
     while (tokType !== _eof) {
-      var stmt = parseStatement();
+      var stmt = parseStatement(true);
       node.body.push(stmt);
       if (first && isUseStrict(stmt)) setStrict(true);
       first = false;
     }
+
+    lastStart = tokStart;
+    lastEnd = tokEnd;
+    lastEndLoc = tokEndLoc;
     return finishNode(node, "Program");
   }
 
@@ -6017,7 +6098,7 @@ function findGlobals(source) {
   // `if (foo) /blah/.exec(foo);`, where looking at the previous token
   // does not help.
 
-  function parseStatement() {
+  function parseStatement(topLevel) {
     if (tokType === _slash || tokType === _assign && tokVal == "/=")
       readToken(true);
 
@@ -6044,8 +6125,11 @@ function findGlobals(source) {
     case _with: return parseWithStatement(node);
     case _braceL: return parseBlock(); // no point creating a function for this
     case _semi: return parseEmptyStatement(node);
-    case _export: return parseExport(node);
-    case _import: return parseImport(node);
+    case _export:
+    case _import:
+      if (!topLevel && !options.allowImportExportEverywhere)
+        raise(tokStart, "'import' and 'export' may only appear at the top level");
+      return starttype === _import ? parseImport(node) : parseExport(node);
 
       // If the statement does not start with a statement keyword or a
       // brace, it's an ExpressionStatement or LabeledStatement. We
@@ -6096,7 +6180,10 @@ function findGlobals(source) {
     labels.pop();
     expect(_while);
     node.test = parseParenExpression();
-    semicolon();
+    if (options.ecmaVersion >= 6)
+      eat(_semi);
+    else
+      semicolon();
     return finishNode(node, "DoWhileStatement");
   }
 
@@ -6118,13 +6205,13 @@ function findGlobals(source) {
       next();
       parseVar(init, true, varKind);
       finishNode(init, "VariableDeclaration");
-      if ((tokType === _in || (tokType === _name && tokVal === "of")) && init.declarations.length === 1 &&
+      if ((tokType === _in || (options.ecmaVersion >= 6 && tokType === _name && tokVal === "of")) && init.declarations.length === 1 &&
           !(isLet && init.declarations[0].init))
         return parseForIn(node, init);
       return parseFor(node, init);
     }
     var init = parseExpression(false, true);
-    if (tokType === _in || (tokType === _name && tokVal === "of")) {
+    if (tokType === _in || (options.ecmaVersion >= 6 && tokType === _name && tokVal === "of")) {
       checkLVal(init);
       return parseForIn(node, init);
     }
@@ -6286,7 +6373,7 @@ function findGlobals(source) {
   // function bodies).
 
   function parseBlock(allowStrict) {
-    var node = startNode(), first = true, strict = false, oldStrict;
+    var node = startNode(), first = true, oldStrict;
     node.body = [];
     expect(_braceL);
     while (!eat(_braceR)) {
@@ -6298,7 +6385,7 @@ function findGlobals(source) {
       }
       first = false;
     }
-    if (strict && !oldStrict) setStrict(false);
+    if (oldStrict === false) setStrict(false);
     return finishNode(node, "BlockStatement");
   }
 
@@ -6361,9 +6448,10 @@ function findGlobals(source) {
   // or the `in` operator (in for loops initalization expressions).
 
   function parseExpression(noComma, noIn) {
+    var start = storeCurrentPos();
     var expr = parseMaybeAssign(noIn);
     if (!noComma && tokType === _comma) {
-      var node = startNodeFrom(expr);
+      var node = startNodeAt(start);
       node.expressions = [expr];
       while (eat(_comma)) node.expressions.push(parseMaybeAssign(noIn));
       return finishNode(node, "SequenceExpression");
@@ -6375,9 +6463,10 @@ function findGlobals(source) {
   // operators like `+=`.
 
   function parseMaybeAssign(noIn) {
+    var start = storeCurrentPos();
     var left = parseMaybeConditional(noIn);
     if (tokType.isAssign) {
-      var node = startNodeFrom(left);
+      var node = startNodeAt(start);
       node.operator = tokVal;
       node.left = tokType === _eq ? toAssignable(left) : left;
       checkLVal(left);
@@ -6391,9 +6480,10 @@ function findGlobals(source) {
   // Parse a ternary conditional (`?:`) operator.
 
   function parseMaybeConditional(noIn) {
+    var start = storeCurrentPos();
     var expr = parseExprOps(noIn);
     if (eat(_question)) {
-      var node = startNodeFrom(expr);
+      var node = startNodeAt(start);
       node.test = expr;
       node.consequent = parseExpression(true);
       expect(_colon);
@@ -6406,7 +6496,8 @@ function findGlobals(source) {
   // Start the precedence parser.
 
   function parseExprOps(noIn) {
-    return parseExprOp(parseMaybeUnary(), -1, noIn);
+    var start = storeCurrentPos();
+    return parseExprOp(parseMaybeUnary(), start, -1, noIn);
   }
 
   // Parse binary operators with the operator precedence parsing
@@ -6415,18 +6506,19 @@ function findGlobals(source) {
   // defer further parser to one of its callers when it encounters an
   // operator that has a lower precedence than the set it is parsing.
 
-  function parseExprOp(left, minPrec, noIn) {
+  function parseExprOp(left, leftStart, minPrec, noIn) {
     var prec = tokType.binop;
     if (prec != null && (!noIn || tokType !== _in)) {
       if (prec > minPrec) {
-        var node = startNodeFrom(left);
+        var node = startNodeAt(leftStart);
         node.left = left;
         node.operator = tokVal;
         var op = tokType;
         next();
-        node.right = parseExprOp(parseMaybeUnary(), prec, noIn);
-        var exprNode = finishNode(node, (op === _logicalOR || op === _logicalAND) ? "LogicalExpression" : "BinaryExpression");
-        return parseExprOp(exprNode, minPrec, noIn);
+        var start = storeCurrentPos();
+        node.right = parseExprOp(parseMaybeUnary(), start, prec, noIn);
+        finishNode(node, (op === _logicalOR || op === _logicalAND) ? "LogicalExpression" : "BinaryExpression");
+        return parseExprOp(node, leftStart, minPrec, noIn);
       }
     }
     return left;
@@ -6436,9 +6528,14 @@ function findGlobals(source) {
 
   function parseMaybeUnary() {
     if (tokType.prefix) {
-      var node = startNode(), update = tokType.isUpdate;
-      node.operator = tokVal;
-      node.prefix = true;
+      var node = startNode(), update = tokType.isUpdate, nodeType;
+      if (tokType === _ellipsis) {
+        nodeType = "SpreadElement";
+      } else {
+        nodeType = update ? "UpdateExpression" : "UnaryExpression";
+        node.operator = tokVal;
+        node.prefix = true;
+      }
       tokRegexpAllowed = true;
       next();
       node.argument = parseMaybeUnary();
@@ -6446,11 +6543,12 @@ function findGlobals(source) {
       else if (strict && node.operator === "delete" &&
                node.argument.type === "Identifier")
         raise(node.start, "Deleting local variable in strict mode");
-      return finishNode(node, update ? "UpdateExpression" : "UnaryExpression");
+      return finishNode(node, nodeType);
     }
+    var start = storeCurrentPos();
     var expr = parseExprSubscripts();
     while (tokType.postfix && !canInsertSemicolon()) {
-      var node = startNodeFrom(expr);
+      var node = startNodeAt(start);
       node.operator = tokVal;
       node.prefix = false;
       node.argument = expr;
@@ -6464,33 +6562,34 @@ function findGlobals(source) {
   // Parse call, dot, and `[]`-subscript expressions.
 
   function parseExprSubscripts() {
-    return parseSubscripts(parseExprAtom());
+    var start = storeCurrentPos();
+    return parseSubscripts(parseExprAtom(), start);
   }
 
-  function parseSubscripts(base, noCalls) {
+  function parseSubscripts(base, start, noCalls) {
     if (eat(_dot)) {
-      var node = startNodeFrom(base);
+      var node = startNodeAt(start);
       node.object = base;
       node.property = parseIdent(true);
       node.computed = false;
-      return parseSubscripts(finishNode(node, "MemberExpression"), noCalls);
+      return parseSubscripts(finishNode(node, "MemberExpression"), start, noCalls);
     } else if (eat(_bracketL)) {
-      var node = startNodeFrom(base);
+      var node = startNodeAt(start);
       node.object = base;
       node.property = parseExpression();
       node.computed = true;
       expect(_bracketR);
-      return parseSubscripts(finishNode(node, "MemberExpression"), noCalls);
+      return parseSubscripts(finishNode(node, "MemberExpression"), start, noCalls);
     } else if (!noCalls && eat(_parenL)) {
-      var node = startNodeFrom(base);
+      var node = startNodeAt(start);
       node.callee = base;
       node.arguments = parseExprList(_parenR, false);
-      return parseSubscripts(finishNode(node, "CallExpression"), noCalls);
-    } else if (tokType === _bquote) {
-      var node = startNodeFrom(base);
+      return parseSubscripts(finishNode(node, "CallExpression"), start, noCalls);
+    } else if (tokType === _template) {
+      var node = startNodeAt(start);
       node.tag = base;
       node.quasi = parseTemplate();
-      return parseSubscripts(finishNode(node, "TaggedTemplateExpression"), noCalls);
+      return parseSubscripts(finishNode(node, "TaggedTemplateExpression"), start, noCalls);
     } return base;
   }
 
@@ -6510,13 +6609,22 @@ function findGlobals(source) {
       if (inGenerator) return parseYield();
 
     case _name:
+      var start = storeCurrentPos();
       var id = parseIdent(tokType !== _name);
       if (eat(_arrow)) {
-        return parseArrowExpression(startNodeFrom(id), [id]);
+        return parseArrowExpression(startNodeAt(start), [id]);
       }
       return id;
 
-    case _num: case _string: case _regexp:
+    case _regexp:
+      var node = startNode();
+      node.regex = {pattern: tokVal.pattern, flags: tokVal.flags};
+      node.value = tokVal.value;
+      node.raw = input.slice(tokStart, tokEnd);
+      next();
+      return finishNode(node, "Literal");
+
+    case _num: case _string:
       var node = startNode();
       node.value = tokVal;
       node.raw = input.slice(tokStart, tokEnd);
@@ -6531,11 +6639,12 @@ function findGlobals(source) {
       return finishNode(node, "Literal");
 
     case _parenL:
-      var tokStartLoc1 = tokStartLoc, tokStart1 = tokStart, val, exprList;
+      var start = storeCurrentPos();
+      var val, exprList;
       next();
       // check whether this is generator comprehension or regular expression
-      if (options.ecmaVersion >= 6 && tokType === _for) {
-        val = parseComprehension(startNode(), true);
+      if (options.ecmaVersion >= 7 && tokType === _for) {
+        val = parseComprehension(startNodeAt(start), true);
       } else {
         var oldParenL = ++metParenL;
         if (tokType !== _parenR) {
@@ -6547,7 +6656,7 @@ function findGlobals(source) {
         expect(_parenR);
         // if '=>' follows '(...)', convert contents to arguments
         if (metParenL === oldParenL && eat(_arrow)) {
-          val = parseArrowExpression(startNode(), exprList);
+          val = parseArrowExpression(startNodeAt(start), exprList);
         } else {
           // forbid '()' before everything but '=>'
           if (!val) unexpected(lastStart);
@@ -6557,16 +6666,13 @@ function findGlobals(source) {
               if (exprList[i].type === "SpreadElement") unexpected();
             }
           }
+
+          if (options.preserveParens) {
+            var par = startNodeAt(start);
+            par.expression = val;
+            val = finishNode(par, "ParenthesizedExpression");
+          }
         }
-      }
-      val.start = tokStart1;
-      val.end = lastEnd;
-      if (options.locations) {
-        val.loc.start = tokStartLoc1;
-        val.loc.end = lastEndLoc;
-      }
-      if (options.ranges) {
-        val.range = [tokStart1, lastEnd];
       }
       return val;
 
@@ -6574,7 +6680,7 @@ function findGlobals(source) {
       var node = startNode();
       next();
       // check whether this is array comprehension or regular array
-      if (options.ecmaVersion >= 6 && tokType === _for) {
+      if (options.ecmaVersion >= 7 && tokType === _for) {
         return parseComprehension(node, false);
       }
       node.elements = parseExprList(_bracketR, true, true);
@@ -6594,10 +6700,7 @@ function findGlobals(source) {
     case _new:
       return parseNew();
 
-    case _ellipsis:
-      return parseSpread();
-
-    case _bquote:
+    case _template:
       return parseTemplate();
 
     default:
@@ -6612,46 +6715,34 @@ function findGlobals(source) {
   function parseNew() {
     var node = startNode();
     next();
-    node.callee = parseSubscripts(parseExprAtom(), true);
+    var start = storeCurrentPos();
+    node.callee = parseSubscripts(parseExprAtom(), start, true);
     if (eat(_parenL)) node.arguments = parseExprList(_parenR, false);
     else node.arguments = empty;
     return finishNode(node, "NewExpression");
   }
 
-  // Parse spread element '...expr'
-
-  function parseSpread() {
-    var node = startNode();
-    next();
-    node.argument = parseExpression(true);
-    return finishNode(node, "SpreadElement");
-  }
-
   // Parse template expression.
+
+  function parseTemplateElement() {
+    var elem = startNodeAt(options.locations ? [tokStart + 1, tokStartLoc.offset(1)] : tokStart + 1);
+    elem.value = tokVal;
+    elem.tail = input.charCodeAt(tokEnd - 1) !== 123; // '{'
+    next();
+    var endOff = elem.tail ? 1 : 2;
+    return finishNodeAt(elem, "TemplateElement", options.locations ? [lastEnd - endOff, lastEndLoc.offset(-endOff)] : lastEnd - endOff);
+  }
 
   function parseTemplate() {
     var node = startNode();
     node.expressions = [];
-    node.quasis = [];
-    inTemplate = true;
-    next();
-    for (;;) {
-      var elem = startNode();
-      elem.value = {cooked: tokVal, raw: input.slice(tokStart, tokEnd)};
-      elem.tail = false;
-      next();
-      node.quasis.push(finishNode(elem, "TemplateElement"));
-      if (eat(_bquote)) { // '`', end of template
-        elem.tail = true;
-        break;
-      }
-      inTemplate = false;
-      expect(_dollarBraceL);
+    var curElt = parseTemplateElement();
+    node.quasis = [curElt];
+    while (!curElt.tail) {
       node.expressions.push(parseExpression());
-      inTemplate = true;
-      expect(_braceR);
+      if (tokType !== _templateContinued) unexpected();
+      node.quasis.push(curElt = parseTemplateElement());
     }
-    inTemplate = false;
     return finishNode(node, "TemplateLiteral");
   }
 
@@ -6803,13 +6894,17 @@ function findGlobals(source) {
         node.rest = toAssignable(parseExprAtom(), false, true);
         checkSpreadAssign(node.rest);
         expect(_parenR);
+        defaults.push(null);
         break;
       } else {
         node.params.push(options.ecmaVersion >= 6 ? toAssignable(parseExprAtom(), false, true) : parseIdent());
-        if (options.ecmaVersion >= 6 && tokType === _eq) {
-          next();
-          hasDefaults = true;
-          defaults.push(parseExpression(true));
+        if (options.ecmaVersion >= 6) {
+          if (eat(_eq)) {
+            hasDefaults = true;
+            defaults.push(parseExpression(true));
+          } else {
+            defaults.push(null);
+          }
         }
         if (!eat(_comma)) {
           expect(_parenR);
@@ -6860,7 +6955,7 @@ function findGlobals(source) {
     next();
     node.id = tokType === _name ? parseIdent() : isStatement ? unexpected() : null;
     node.superClass = eat(_extends) ? parseExpression() : null;
-    var classBody = startNode(), methodHash = {}, staticMethodHash = {};
+    var classBody = startNode();
     classBody.body = [];
     expect(_braceL);
     while (!eat(_braceR)) {
@@ -6873,7 +6968,7 @@ function findGlobals(source) {
       }
       var isGenerator = eat(_star);
       parsePropertyName(method);
-      if (tokType === _name && !method.computed && method.key.type === "Identifier" &&
+      if (tokType !== _parenL && !method.computed && method.key.type === "Identifier" &&
           (method.key.name === "get" || method.key.name === "set")) {
         if (isGenerator) unexpected();
         method.kind = method.key.name;
@@ -6882,7 +6977,6 @@ function findGlobals(source) {
         method.kind = "";
       }
       method.value = parseMethod(isGenerator);
-      checkPropClash(method, method['static'] ? staticMethodHash : methodHash);
       classBody.body.push(finishNode(method, "MethodDefinition"));
       eat(_semi);
     }
@@ -6954,8 +7048,8 @@ function findGlobals(source) {
       node.source = null;
       semicolon();
     } else {
-      // export * from '...'
-      // export { x, y as z } [from '...']
+      // export * from '...';
+      // export { x, y as z } [from '...'];
       var isBatch = tokType === _star;
       node.declaration = null;
       node['default'] = false;
@@ -6967,6 +7061,7 @@ function findGlobals(source) {
         if (isBatch) unexpected();
         node.source = null;
       }
+      semicolon();
     }
     return finishNode(node, "ExportDeclaration");
   }
@@ -6990,7 +7085,7 @@ function findGlobals(source) {
         } else first = false;
 
         var node = startNode();
-        node.id = parseIdent();
+        node.id = parseIdent(tokType === _default);
         if (tokType === _name && tokVal === "as") {
           next();
           node.name = parseIdent(true);
@@ -7017,10 +7112,8 @@ function findGlobals(source) {
       if (tokType !== _name || tokVal !== "from") unexpected();
       next();
       node.source = tokType === _string ? parseExprAtom() : unexpected();
-      // only for backward compatibility with Esprima's AST
-      // (it doesn't support mixed default + named yet)
-      node.kind = node.specifiers[0]['default'] ? "default" : "named";
     }
+    semicolon();
     return finishNode(node, "ImportDeclaration");
   }
 
@@ -7028,16 +7121,6 @@ function findGlobals(source) {
 
   function parseImportSpecifiers() {
     var nodes = [], first = true;
-    if (tokType === _star) {
-      var node = startNode();
-      next();
-      if (tokType !== _name || tokVal !== "as") unexpected();
-      next();
-      node.name = parseIdent();
-      checkLVal(node.name, true);
-      nodes.push(finishNode(node, "ImportBatchSpecifier"));
-      return nodes;
-    }
     if (tokType === _name) {
       // import defaultObj, { x, y as z } from '...'
       var node = startNode();
@@ -7047,6 +7130,16 @@ function findGlobals(source) {
       node['default'] = true;
       nodes.push(finishNode(node, "ImportSpecifier"));
       if (!eat(_comma)) return nodes;
+    }
+    if (tokType === _star) {
+      var node = startNode();
+      next();
+      if (tokType !== _name || tokVal !== "as") unexpected();
+      next();
+      node.name = parseIdent();
+      checkLVal(node.name, true);
+      nodes.push(finishNode(node, "ImportBatchSpecifier"));
+      return nodes;
     }
     expect(_braceL);
     while (!eat(_braceR)) {
@@ -7422,6 +7515,8 @@ function findGlobals(source) {
     c(node.body, st, "Expression");
   };
 
+  // NOTE: the stuff below is deprecated, and will be removed when 1.0 is released
+
   // A custom walker that keeps track of the scope chain and the
   // variables defined in it.
   function makeScope(prev, isCatch) {
@@ -7593,10 +7688,10 @@ function unwrapReturns(src, result) {
 }
 
 },{"acorn":37,"acorn-globals":36,"acorn/util/walk":38}],36:[function(require,module,exports){
-module.exports=require(31)
-},{"/Users/forbeslindesay/GitHub/jade/node_modules/constantinople/node_modules/acorn-globals/index.js":31,"acorn":37,"acorn/util/walk":38}],37:[function(require,module,exports){
-module.exports=require(32)
-},{"/Users/forbeslindesay/GitHub/jade/node_modules/constantinople/node_modules/acorn-globals/node_modules/acorn/acorn.js":32}],38:[function(require,module,exports){
-module.exports=require(33)
-},{"/Users/forbeslindesay/GitHub/jade/node_modules/constantinople/node_modules/acorn-globals/node_modules/acorn/util/walk.js":33}]},{},[4])(4)
+arguments[4][31][0].apply(exports,arguments)
+},{"acorn":37,"acorn/util/walk":38,"dup":31}],37:[function(require,module,exports){
+arguments[4][32][0].apply(exports,arguments)
+},{"dup":32}],38:[function(require,module,exports){
+arguments[4][33][0].apply(exports,arguments)
+},{"dup":33}]},{},[4])(4)
 });
